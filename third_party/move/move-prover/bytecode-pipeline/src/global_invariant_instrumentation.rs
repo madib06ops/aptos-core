@@ -197,6 +197,40 @@ impl<'env> Instrumenter<'env> {
                     }
                 }
             }
+
+            // Under the prophecy model a global resource is mutated eagerly at its
+            // `BorrowGlobal`, while the global-state transition (where update invariants are
+            // asserted and their `old(mem)` snapshot is taken) is marked at the resolve-time
+            // `ProphecyCommitGlobal`. Relocate the state snapshot to the `BorrowGlobal`
+            // so `old(mem)` captures the pre-mutation state (reusing the same relocation maps
+            // as the OpaqueCallBegin case above).
+            if let Bytecode::Call(_, _, Operation::ProphecyCommitGlobal(mem), ..) =
+                old_code.get(code_offset as usize).unwrap()
+            {
+                let xlated = xlated_inlined.get(&code_offset).unwrap();
+                // Relocate whenever the update invariants take any pre-state snapshot —
+                // memory (`old(global<T>)`) or spec variables (`old(ghost)`) alike; a
+                // snapshot left at the commit marker would observe the state after the
+                // borrow's mutations instead of before them.
+                if !xlated.saved_memory.is_empty() || !xlated.saved_spec_vars.is_empty() {
+                    for needle in (0..code_offset as usize).rev() {
+                        if let Bytecode::Call(
+                            _,
+                            _,
+                            Operation::BorrowGlobal(bmid, bsid, binst),
+                            ..,
+                        ) = old_code.get(needle).unwrap()
+                        {
+                            if *bmid == mem.module_id && *bsid == mem.id && binst == &mem.inst {
+                                let needle = needle as CodeOffset;
+                                xlated_for_opaque_begin.insert(needle, code_offset);
+                                xlated_for_opaque_end.insert(code_offset, needle);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Step 1: emit entrypoint assumptions

@@ -17,6 +17,7 @@ use crate::{
     normalize_exits::NormalizeExitsProcessor,
     number_operation_analysis::NumberOperationProcessor,
     options::ProverOptions,
+    prophecy_instrumentation::ProphecyInstrumentationProcessor,
     spec_inference::{LambdaSpecInferenceProcessor, SpecInferenceProcessor},
     spec_instrumentation::SpecInstrumentationProcessor,
     verification_analysis::VerificationAnalysisProcessor,
@@ -41,8 +42,20 @@ pub fn default_pipeline_with_options(options: &ProverOptions) -> FunctionTargetP
         ReachingDefProcessor::new(),
         LiveVarAnalysisProcessor::new(),
         BorrowAnalysisProcessor::new_borrow_natives(options.borrow_natives.clone()),
-        MemoryInstrumentationProcessor::new(),
     ];
+
+    // Mutation instrumentation: the default path-free prophecy model, or the legacy
+    // static write-back (path) model when `--path-refs` is set. Spec inference is
+    // model-agnostic (it produces ordinary Move specifications), so it always uses the
+    // static model; the model switch only affects verification. The inferred specs are
+    // then verifiable under either model. See doc/dev/prophecies/prophecy_model.md.
+    processors.push(
+        if !options.path_refs && !options.inference {
+            ProphecyInstrumentationProcessor::new()
+        } else {
+            MemoryInstrumentationProcessor::new()
+        },
+    );
 
     processors.append(&mut vec![
         CleanAndOptimizeProcessor::new(),

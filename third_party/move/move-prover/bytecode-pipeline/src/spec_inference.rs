@@ -3334,6 +3334,11 @@ impl<'env> TransferFunctions for SpecInferenceAnalyzer<'env> {
 
                     // WP[...](Q) = Q  (verification IL; no effect on inference)
                     Operation::IsParent(_, _)
+                    | Operation::ProphecyBorrow(_, _)
+                    | Operation::ProphecyCommitGlobal(_)
+                    | Operation::ProphecyRepin(_)
+                    | Operation::Resolve
+                    | Operation::ResolveReturn
                     | Operation::UnpackRef
                     | Operation::PackRef
                     | Operation::UnpackRefDeep

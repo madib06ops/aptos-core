@@ -1427,6 +1427,26 @@ fn check_data_invariants(struct_env: &StructEnv) {
                     ),
                 )
             }
+            // A behavioral predicate (`requires_of`/`aborts_of`/`ensures_of`/`result_of`) is
+            // evaluated against global memory, so in a data invariant it must be bound to a
+            // universally quantified state via `forall S in *: S |~ ...`. Left at the free/ambient
+            // state (a default memory range) it makes the invariant state-dependent, which is not
+            // allowed: a data invariant must be a property of the value alone. `used_memory` above
+            // does not look inside `Operation::Behavior`, so this is checked separately.
+            let has_free_state_behavior = cond.exp.any(&mut |e| {
+                matches!(
+                    e,
+                    ExpData::Call(_, Operation::Behavior(_, range), _) if range.is_default()
+                )
+            });
+            if has_free_state_behavior {
+                env.error(
+                    &cond.loc,
+                    "data invariant must not depend on a free state: a behavioral predicate \
+                     must be evaluated at a universally quantified state — wrap it in \
+                     `forall S in *: S |~ ...`",
+                )
+            }
         }
     }
 }

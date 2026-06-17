@@ -66,7 +66,8 @@ fn get_features() -> &'static [Feature] {
     static TESTED_FEATURES: OnceCell<Vec<Feature>> = OnceCell::new();
     TESTED_FEATURES.get_or_init(|| {
         vec![
-            // Tests the default configuration with the v2 compiler chain
+            // Tests the default configuration (path-free prophecy reference model) with
+            // the v2 compiler chain.
             Feature {
                 name: "default",
                 flags: &[],
@@ -86,6 +87,24 @@ fn get_features() -> &'static [Feature] {
                 only_if_requested: true, // Only run if requested
                 separate_baseline: false,
                 runner: |p| test_runner_for_feature(p, get_feature_by_name("cvc5")),
+                enabling_condition: |group, _| group == "unit",
+            },
+            // Cross-checks the legacy WriteBack (static) reference model against the
+            // default path-free prophecy model. Every unit test also runs under
+            // `--path-refs` and, by default, must produce the SAME `.exp` as the default
+            // (separate_baseline: false) — that shared baseline is the proof the two
+            // models agree. A test whose static output legitimately differs escapes the
+            // sharing with `// separate_baseline: path` (producing `foo.path_exp`); a test
+            // the default (prophecy) model cannot verify is excluded from the default with
+            // `// exclude_for: default`. Runs in CI.
+            Feature {
+                name: "path",
+                flags: &["--path-refs"],
+                inclusion_mode: InclusionMode::Implicit,
+                enable_in_ci: true,
+                only_if_requested: false,
+                separate_baseline: false, // shares foo.exp with `default`
+                runner: |p| test_runner_for_feature(p, get_feature_by_name("path")),
                 enabling_condition: |group, _| group == "unit",
             },
         ]

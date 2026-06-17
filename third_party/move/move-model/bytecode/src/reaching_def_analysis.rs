@@ -114,9 +114,15 @@ impl ReachingDefProcessor {
             .filter_map(|bc| match bc {
                 Call(_, _, Operation::BorrowLoc, srcs, _) => Some(srcs[0]),
                 Call(_, _, Operation::WriteBack(BorrowNode::LocalRoot(src), ..), ..)
-                | Call(_, _, Operation::IsParent(BorrowNode::LocalRoot(src), ..), ..) => Some(*src),
+                | Call(_, _, Operation::IsParent(BorrowNode::LocalRoot(src), ..), ..)
+                | Call(_, _, Operation::ProphecyBorrow(BorrowNode::LocalRoot(src), ..), ..) => {
+                    Some(*src)
+                },
                 Call(_, _, Operation::WriteBack(BorrowNode::Reference(src), ..), ..)
-                | Call(_, _, Operation::IsParent(BorrowNode::Reference(src), ..), ..) => Some(*src),
+                | Call(_, _, Operation::IsParent(BorrowNode::Reference(src), ..), ..)
+                | Call(_, _, Operation::ProphecyBorrow(BorrowNode::Reference(src), ..), ..) => {
+                    Some(*src)
+                },
                 _ => None,
             })
             .collect()

@@ -294,6 +294,28 @@ pub enum Operation {
     UnpackRefDeep,
     PackRefDeep,
 
+    // Prophecy memory model (the default; alternative to WriteBack/IsParent, which is
+    // used only under `--path-refs`). ProphecyBorrow marks a borrow creation,
+    // carrying the lender node and edge; Resolve marks a dying reference whose
+    // prophecy is fulfilled (assume current == final). ResolveReturn marks a
+    // returned reference: it is derived from a parameter and resolved only when
+    // verifying its function standalone (no caller); in the inlined body it is
+    // left free for the caller to resolve.
+    ProphecyBorrow(BorrowNode, BorrowEdge),
+    Resolve,
+    ResolveReturn,
+    /// Marks the global-state transition of a resolved global borrow under the
+    /// prophecy model: the resource memory was eagerly set to the prophecy at the
+    /// `BorrowGlobal`, and this marker (emitted where the borrow dies, after its
+    /// `Resolve`) is where update invariants are asserted. Generates no code.
+    ProphecyCommitGlobal(QualifiedInstId<StructId>),
+    /// Re-pins an exclusively borrowed global resource slot after an intervening
+    /// call under the prophecy model, with sources `[child, addr]`:
+    /// `mem := ResourceUpdate(mem, addr, child->f)`. Restores the eager update in
+    /// case the callee havoced the memory — no non-aborting callee can change the
+    /// borrowed slot itself. Not a state transition for invariant purposes.
+    ProphecyRepin(QualifiedInstId<StructId>),
+
     // Get shortcut
     GetField(ModuleId, StructId, Vec<Type>, usize),
     GetVariantField(ModuleId, StructId, Vec<Symbol>, Vec<Type>, usize),
@@ -355,6 +377,11 @@ impl Operation {
             Operation::PackRef => false,
             Operation::UnpackRefDeep => false,
             Operation::PackRefDeep => false,
+            Operation::ProphecyBorrow(..) => false,
+            Operation::Resolve => false,
+            Operation::ResolveReturn => false,
+            Operation::ProphecyCommitGlobal(..) => false,
+            Operation::ProphecyRepin(..) => false,
             Operation::CastU8 => true,
             Operation::CastU16 => true,
             Operation::CastU32 => true,
@@ -791,6 +818,13 @@ impl Bytecode {
                 map(true, f, srcs),
                 map_abort(f, aa),
             ),
+            Call(attr, _, ProphecyBorrow(node, edge), srcs, aa) => Call(
+                attr,
+                vec![],
+                ProphecyBorrow(map_node(f, node), edge),
+                map(true, f, srcs),
+                map_abort(f, aa),
+            ),
             Call(attr, dests, IsParent(node, edge), srcs, aa) => Call(
                 attr,
                 map(false, f, dests),
@@ -895,6 +929,11 @@ impl Bytecode {
                     WriteBack(node, edge) => {
                         WriteBack(node.instantiate(params), edge.instantiate(params))
                     },
+                    ProphecyBorrow(node, edge) => {
+                        ProphecyBorrow(node.instantiate(params), edge.instantiate(params))
+                    },
+                    ProphecyCommitGlobal(mem) => ProphecyCommitGlobal(mem.instantiate_ref(params)),
+                    ProphecyRepin(mem) => ProphecyRepin(mem.instantiate_ref(params)),
                     // others
                     _ => op.clone(),
                 };
@@ -965,6 +1004,14 @@ impl Bytecode {
             },
             Call(_, _, Operation::WriteBack(Reference(dest), ..), _, aa) => {
                 // write-back to a reference only distorts the value, but not the pointer itself
+                (add_abort(vec![], aa), vec![(*dest, false)])
+            },
+            Call(_, _, Operation::ProphecyBorrow(LocalRoot(dest), ..), _, aa) => {
+                // eager prophecy update of a local lender distorts its value
+                (add_abort(vec![*dest], aa), vec![])
+            },
+            Call(_, _, Operation::ProphecyBorrow(Reference(dest), ..), _, aa) => {
+                // eager prophecy update of a reference lender distorts the value, not the pointer
                 (add_abort(vec![], aa), vec![(*dest, false)])
             },
             Call(_, _, Operation::WriteRef, srcs, aa) => {
@@ -1421,6 +1468,24 @@ impl fmt::Display for OperationDisplay<'_> {
                 node.display(self.func_target),
                 edge.display(self.func_target.global_env())
             )?,
+            ProphecyBorrow(node, edge) => write!(
+                f,
+                "prophecy_borrow[{}{}]",
+                node.display(self.func_target),
+                edge.display(self.func_target.global_env())
+            )?,
+            Resolve => write!(f, "resolve")?,
+            ResolveReturn => write!(f, "resolve_return")?,
+            ProphecyCommitGlobal(mem) => {
+                let ty = Type::Struct(mem.module_id, mem.id, mem.inst.to_owned());
+                let tctx = TypeDisplayContext::new(self.func_target.global_env());
+                write!(f, "prophecy_commit_global[{}]", ty.display(&tctx))?
+            },
+            ProphecyRepin(mem) => {
+                let ty = Type::Struct(mem.module_id, mem.id, mem.inst.to_owned());
+                let tctx = TypeDisplayContext::new(self.func_target.global_env());
+                write!(f, "prophecy_repin[{}]", ty.display(&tctx))?
+            },
 
             Havoc(kind) => {
                 write!(f, "havoc[{}]", match kind {
