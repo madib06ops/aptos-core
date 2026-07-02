@@ -18,6 +18,7 @@ mod verifier;
 
 pub use error::{RuntimeError, RuntimeStatus};
 pub use execution_context::{ExecutionContext, LocalExecutionContext};
+pub use global_storage::{Entry, ResourceReadWriteSet, StorageWrite};
 pub use heap::Heap;
 pub use interpreter::InterpreterContext;
 pub use local_runtime_context::LocalRuntimeContext;

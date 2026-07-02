@@ -32,6 +32,7 @@ use crate::{
 };
 use mono_move_core::{
     captured_values_size,
+    interner::{InternedIdentifier, InternedModuleId},
     native::{
         NativeABI, NativeExtensions, NativeIdx, NativeStatus, ObjectHandle, RootPool,
         VMInternalError,
@@ -40,14 +41,15 @@ use mono_move_core::{
     storage::resource_provider::InMemoryStorageKey,
     types::{view_type_list, InternedType, InternedTypeList},
     CallClosureOp, ClosureFuncRef, CmpKind, CodeOffset, ConstantPoolIndex, DescriptorId,
-    DescriptorProvider, FrameOffset, Function, FunctionRef, IntBinaryOp, IntCastOp, IntNegateOp,
-    IntOperand, IntShiftOp, IntTy, LayoutProvider, MicroOp, PackClosureOp, ShiftOperand, VecPackOp,
-    VecUnpackOp, CAPTURED_DATA_TAG_MATERIALIZED, CAPTURED_DATA_TAG_OFFSET,
+    DescriptorProvider, FrameOffset, Function, FunctionPtr, FunctionRef, IntBinaryOp, IntCastOp,
+    IntNegateOp, IntOperand, IntShiftOp, IntTy, LayoutProvider, MicroOp, PackClosureOp,
+    ShiftOperand, VecPackOp, VecUnpackOp, CAPTURED_DATA_TAG_MATERIALIZED, CAPTURED_DATA_TAG_OFFSET,
     CAPTURED_DATA_VALUES_OFFSET, CAPTURED_DATA_VALUES_SIZE_OFFSET,
     CLOSURE_CAPTURED_DATA_PTR_OFFSET, CLOSURE_DESCRIPTOR_ID, CLOSURE_FUNC_REF_OFFSET,
     CLOSURE_MASK_OFFSET, FRAME_METADATA_SIZE, FUNC_REF_PAYLOAD_OFFSET, FUNC_REF_TAG_OFFSET,
     FUNC_REF_TAG_RESOLVED, FUNC_REF_TAG_UNRESOLVED, MAX_ALIGN, OBJECT_HEADER_SIZE,
 };
+use mono_move_loader::LoaderResult;
 use move_core_types::int256::{I256, U256};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::ptr::{null, NonNull};
@@ -164,6 +166,34 @@ impl<'a, T: ExecutionContext + DescriptorProvider + LayoutProvider> InterpreterC
         self.exec_ctx.extensions()
     }
 
+    /// The transaction's global-storage read-write set, for write-set
+    /// publication after execution. Heap pointers inside the entries are only
+    /// valid while this context (and its heap) is alive.
+    pub fn read_write_set(&self) -> &ResourceReadWriteSet {
+        &self.read_write_set
+    }
+
+    /// Resets the gas budget for the next call in this context.
+    pub fn reset_gas(&mut self, budget: u64) {
+        self.exec_ctx.gas_meter().reset(budget);
+    }
+
+    /// Resolves a function through the execution context, for drivers that
+    /// invoke several functions in one transaction.
+    pub fn load_function(
+        &mut self,
+        module_id: InternedModuleId,
+        name: InternedIdentifier,
+        ty_args: InternedTypeList,
+    ) -> LoaderResult<FunctionPtr> {
+        self.exec_ctx.load_function(module_id, name, ty_args)
+    }
+
+    /// Remaining gas balance.
+    pub fn gas_balance(&mut self) -> u64 {
+        self.exec_ctx.gas_meter().balance()
+    }
+
     /// Takes a checkpoint (opening a new sub-session): checkpoints the
     /// read-write set and signals every native extension. The two advance in
     /// lockstep, so a single [`Self::rollback`] depth undoes a checkpoint's
@@ -207,12 +237,12 @@ impl<'a, T: ExecutionContext + DescriptorProvider + LayoutProvider> InterpreterC
         self.read_write_set.journal_len()
     }
 
-    /// Reset the context to call a different function, preserving the heap.
+    /// Reset the context to call a different function, preserving the heap,
+    /// read-write set, and extensions. Drivers running several functions in
+    /// one transaction (prologue, payload, epilogue) call this between them;
+    /// the gas budget is managed separately via [`Self::reset_gas`].
     ///
     /// Use `set_root_arg` to place arguments before calling `run()`.
-    ///
-    // TODO(cleanup): invoke() is test-only for now. When used with real gas budgets,
-    // decide whether to reset the gas meter here.
     pub fn invoke(&mut self, func: &Function) {
         let base = self.stack.as_ptr();
 

@@ -215,6 +215,13 @@ impl ResourceReadWriteSet {
         Self::default()
     }
 
+    /// Iterates every entry touched by the transaction, for write-set
+    /// publication. Iteration order is non-deterministic; callers must impose
+    /// their own deterministic ordering on anything derived from it.
+    pub fn entries(&self) -> impl Iterator<Item = (&InMemoryStorageKey, &Entry)> {
+        self.entries.iter()
+    }
+
     /// Returns true if the resource exists at the specified key.
     pub(crate) fn exists(
         &mut self,
